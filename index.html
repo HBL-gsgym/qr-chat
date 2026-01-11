@@ -4,24 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>QR-Chat (ohne Anmeldung)</title>
-  <script>
-(function loadQR(){
-  const urls = [
-    "https://unpkg.com/qrcode@1.5.4/build/qrcode.min.js",
-    "https://cdnjs.cloudflare.com/ajax/libs/qrcode/1.5.4/qrcode.min.js"
-  ];
-  function tryNext(i){
-    if(i >= urls.length) { console.error("QR lib failed"); return; }
-    const s = document.createElement("script");
-    s.src = urls[i];
-    s.onload = () => console.log("QR loaded:", urls[i]);
-    s.onerror = () => tryNext(i+1);
-    document.head.appendChild(s);
-  }
-  tryNext(0);
-})();
-</script>
-
   <style>
     :root{--bg:#0b1220;--card:#121b2f;--text:#e9f0ff;--muted:#8aa0c6;--acc:#5dd6ff;--bad:#ff6b6b;}
     *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
@@ -45,7 +27,7 @@
     .meta{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);margin-bottom:4px}
     .text{white-space:pre-wrap;word-break:break-word}
     .small{font-size:12px;color:var(--muted)}
-    canvas{background:#fff;border-radius:10px;padding:8px}
+    .qrimg{width:240px;height:240px;background:#fff;border-radius:10px;padding:8px;display:block}
   </style>
 </head>
 <body>
@@ -100,7 +82,7 @@
       <div style="font-size:14px;margin-bottom:6px">Join-Link / QR</div>
       <div id="link" class="small mono" style="word-break:break-all"></div>
       <div style="margin:12px 0">
-        <canvas id="qr" width="240" height="240"></canvas>
+        <img id="qrImg" class="qrimg" alt="QR Code" />
       </div>
       <div class="pill">Raum-PIN: <span id="roomPin" class="mono">–</span></div>
       <div class="pill" style="margin-top:8px">Lehrer-PIN: <span id="teacherPin" class="mono">–</span></div>
@@ -113,7 +95,8 @@
 
 <script>
   // === CONFIG ===
-  const BACKEND_BASE = "https://qr-chat-backend.linebacker.workers.dev"; // <- HIER deine Worker-URL rein
+  // HIER eintragen: deine Worker-URL aus "wrangler deploy", z.B. "https://qr-chat-backend.linebacker.workers.dev"
+  const BACKEND_BASE = "PASTE_YOUR_WORKER_URL_HERE";
 
   const $ = (id) => document.getElementById(id);
 
@@ -134,11 +117,22 @@
   function normRoom(s){
     return (s||"").trim().toLowerCase().replace(/[^a-z0-9\-]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"");
   }
+
+  function setQR(link){
+    // QR als PNG via QuickChart (kein externes JS -> weniger Probleme mit Schulnetzfiltern)
+    // Docs/Format: cht=qr, chs=WxH, chl=payload
+    const primary = `https://quickchart.io/chart?cht=qr&chs=240x240&chl=${encodeURIComponent(link)}`;
+    const fallback = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(link)}`;
+    const img = $("qrImg");
+    img.onerror = () => { img.onerror = null; img.src = fallback; };
+    img.src = primary;
+  }
+
   function renderLinkQR(){
     $("room").textContent = state.roomId || "–";
     const link = state.roomId ? setRoomInURL(state.roomId) : location.href;
     $("link").textContent = link;
-    QRCode.toCanvas($("qr"), link, { width: 240, margin: 1 });
+    setQR(link);
   }
 
   function escapeHTML(s){
@@ -206,7 +200,10 @@
         tickExpiry();
       }
       if(msg.type==="msg") addMsg(msg);
+
+      // simplest robust update after delete: reload
       if(msg.type==="deleted"){ location.reload(); }
+
       if(msg.type==="locked"){ state.locked = msg.locked; applyControls(); }
       if(msg.type==="kickedAll" || msg.type==="kicked"){
         alert("Du wurdest aus dem Raum geworfen. Bitte erneut mit PIN beitreten.");
@@ -328,9 +325,16 @@
     state.ws.send(JSON.stringify({ type:"softDelete", id }));
   });
 
+  // on load
   const fromUrl = normRoom(nowRoomFromURL());
-  if(fromUrl){ state.roomId = fromUrl; renderLinkQR(); setStatus("Raum via Link geladen"); }
-  else { renderLinkQR(); setStatus("bereit"); }
+  if(fromUrl){
+    state.roomId = fromUrl;
+    renderLinkQR();
+    setStatus("Raum via Link geladen");
+  } else {
+    renderLinkQR();
+    setStatus("bereit");
+  }
 </script>
 </body>
 </html>
