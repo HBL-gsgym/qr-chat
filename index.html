@@ -1,1 +1,319 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>QR-Chat (ohne Anmeldung)</title>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <style>
+    :root{--bg:#0b1220;--card:#121b2f;--text:#e9f0ff;--muted:#8aa0c6;--acc:#5dd6ff;--bad:#ff6b6b;}
+    *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+    body{margin:0;background:radial-gradient(1200px 700px at 20% 0%, #142349, var(--bg));color:var(--text)}
+    .wrap{max-width:980px;margin:0 auto;padding:16px}
+    .grid{display:grid;grid-template-columns:1.25fr .75fr;gap:12px}
+    @media(max-width:900px){.grid{grid-template-columns:1fr}}
+    .card{background:rgba(18,27,47,.92);border:1px solid rgba(93,214,255,.12);border-radius:16px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+    h1{margin:0 0 6px;font-size:20px}
+    .sub{color:var(--muted);font-size:13px;margin:0 0 10px}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    input,button{border-radius:12px;border:1px solid rgba(93,214,255,.18);background:rgba(11,18,32,.7);color:var(--text);padding:10px 12px}
+    input{flex:1;min-width:200px;outline:none}
+    button{cursor:pointer}
+    .acc{background:rgba(93,214,255,.12)}
+    .danger{background:rgba(255,107,107,.10);border-color:rgba(255,107,107,.25)}
+    .pill{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid rgba(93,214,255,.15);background:rgba(93,214,255,.07);font-size:12px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    #msgs{height:62vh;overflow:auto;padding:10px;border-radius:14px;border:1px solid rgba(93,214,255,.12);background:rgba(11,18,32,.45)}
+    .m{padding:8px 10px;margin:8px 0;border-radius:12px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.03)}
+    .meta{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);margin-bottom:4px}
+    .text{white-space:pre-wrap;word-break:break-word}
+    .small{font-size:12px;color:var(--muted)}
+    canvas{background:#fff;border-radius:10px;padding:8px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Browser-Chatroom (Link/QR, ohne Anmeldung)</h1>
+  <div class="sub">Lehrer: Raumname setzen → PIN anzeigen → SuS joinen. Moderation: soft-delete, schließen, rauswerfen. Ablauf: 2h.</div>
 
+  <div class="grid">
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:10px">
+        <div class="pill">Raum: <span id="room" class="mono"></span></div>
+        <div class="pill">Status: <span id="status">–</span></div>
+      </div>
+
+      <div id="teacherSetup">
+        <div class="row">
+          <input id="roomInput" placeholder="Raumname (z.B. 8a-technik-2026-01-11)" />
+          <button id="startRoom" class="acc">Raum starten</button>
+        </div>
+        <div class="small" style="margin-top:8px">
+          Tipp: URL-tauglich: Kleinbuchstaben/Ziffern/Bindestrich. Wenn du jeden Tag neu willst: Datum anhängen.
+        </div>
+        <hr style="border:0;border-top:1px solid rgba(255,255,255,.08);margin:14px 0">
+      </div>
+
+      <div class="row" style="margin-bottom:10px">
+        <input id="name" placeholder="Name (SuS)" maxlength="30" />
+        <input id="pin" placeholder="Raum-PIN" maxlength="10" />
+        <button id="join" class="acc">Beitreten</button>
+      </div>
+
+      <div class="row" style="margin-bottom:10px">
+        <input id="tpin" placeholder="Lehrer-PIN" maxlength="12" />
+        <button id="teacher" class="acc">Lehrer-Modus</button>
+        <button id="lock" class="danger" disabled>Raum schließen</button>
+        <button id="kick" class="danger" disabled>Alle rauswerfen</button>
+      </div>
+
+      <div id="msgs"></div>
+
+      <div class="row" style="margin-top:10px">
+        <input id="text" placeholder="Nachricht…" maxlength="500" />
+        <button id="send" class="acc" disabled>Senden</button>
+      </div>
+
+      <div class="small" style="margin-top:8px">
+        Soft-Delete: im Chat auf „🗑️“ (nur Lehrkraft). Nach 2h ist der Raum automatisch abgelaufen.
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-size:14px;margin-bottom:6px">Join-Link / QR</div>
+      <div id="link" class="small mono" style="word-break:break-all"></div>
+      <div style="margin:12px 0">
+        <canvas id="qr" width="240" height="240"></canvas>
+      </div>
+      <div class="pill">Raum-PIN: <span id="roomPin" class="mono">–</span></div>
+      <div class="pill" style="margin-top:8px">Lehrer-PIN: <span id="teacherPin" class="mono">–</span></div>
+      <div class="small" style="margin-top:10px">
+        Lehrer-PIN nur für dich. Raum-PIN an die Klasse.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // === CONFIG ===
+  const BACKEND_BASE = "https://qr-chat-backend.linebacker.workers.dev"; // <- HIER deine Worker-URL rein
+
+  const $ = (id) => document.getElementById(id);
+
+  const state = { roomId: null, token: null, role: null, locked: false, ws: null, expiresAt: 0 };
+
+  function setStatus(s){ $("status").textContent = s; }
+  function nowRoomFromURL(){
+    const u = new URL(location.href);
+    const r = (u.searchParams.get("room")||"").trim();
+    return r || null;
+  }
+  function setRoomInURL(room){
+    const u = new URL(location.href);
+    u.searchParams.set("room", room);
+    history.replaceState({}, "", u.toString());
+    return u.toString();
+  }
+  function normRoom(s){
+    return (s||"").trim().toLowerCase().replace(/[^a-z0-9\-]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"");
+  }
+  function renderLinkQR(){
+    $("room").textContent = state.roomId || "–";
+    const link = state.roomId ? setRoomInURL(state.roomId) : location.href;
+    $("link").textContent = link;
+    QRCode.toCanvas($("qr"), link, { width: 240, margin: 1 });
+  }
+
+  function escapeHTML(s){
+    return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;" }[c]));
+  }
+
+  function addMsg(m){
+    const box = $("msgs");
+    const div = document.createElement("div");
+    div.className = "m";
+    const t = new Date(m.ts || Date.now());
+    const hh = String(t.getHours()).padStart(2,"0");
+    const mm = String(t.getMinutes()).padStart(2,"0");
+
+    const deleted = m.deleted ? `<span class="small">(gelöscht)</span>` : "";
+    const text = m.deleted ? "" : escapeHTML(m.text||"");
+
+    const delBtn = (state.role==="teacher" && !m.deleted)
+      ? `<button data-del="${m.id}" class="danger" style="padding:6px 8px;border-radius:10px">🗑️</button>`
+      : "";
+
+    div.innerHTML = `
+      <div class="meta">
+        <span class="mono">${escapeHTML(m.name||"Anon")}</span>
+        <span>${hh}:${mm} ${deleted} ${delBtn}</span>
+      </div>
+      <div class="text">${text}</div>
+    `;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function clearMsgs(){ $("msgs").innerHTML = ""; }
+
+  async function api(path, body){
+    const res = await fetch(`${BACKEND_BASE}${path}`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(body)
+    });
+    const j = await res.json().catch(()=>({}));
+    if(!res.ok || j.error) throw new Error(j.error || `http_${res.status}`);
+    return j;
+  }
+
+  function wsOpen(){
+    if(state.ws) try{ state.ws.close(); } catch{}
+    const wsUrl = `${BACKEND_BASE.replace("https://","wss://").replace("http://","ws://")}/ws?room=${encodeURIComponent(state.roomId)}&token=${encodeURIComponent(state.token)}`;
+    const ws = new WebSocket(wsUrl);
+    state.ws = ws;
+
+    ws.onopen = () => setStatus("verbunden");
+    ws.onclose = () => setStatus("getrennt");
+    ws.onerror = () => setStatus("Fehler");
+
+    ws.onmessage = (ev) => {
+      const msg = JSON.parse(ev.data);
+      if(msg.type==="init"){
+        state.role = msg.role;
+        state.locked = msg.locked;
+        state.expiresAt = msg.expiresAt;
+        clearMsgs();
+        (msg.messages||[]).forEach(addMsg);
+        applyControls();
+        tickExpiry();
+      }
+      if(msg.type==="msg") addMsg(msg);
+      if(msg.type==="deleted"){ location.reload(); }
+      if(msg.type==="locked"){ state.locked = msg.locked; applyControls(); }
+      if(msg.type==="kickedAll" || msg.type==="kicked"){
+        alert("Du wurdest aus dem Raum geworfen. Bitte erneut mit PIN beitreten.");
+        state.token=null; state.role=null; applyControls();
+        try{ ws.close(); } catch{}
+      }
+      if(msg.type==="expired"){
+        alert("Raum ist abgelaufen (2h).");
+        state.token=null; state.role=null; applyControls();
+        try{ ws.close(); } catch{}
+      }
+    };
+  }
+
+  function applyControls(){
+    const isTeacher = state.role === "teacher";
+    $("send").disabled = !state.token || (state.locked && !isTeacher);
+    $("lock").disabled = !isTeacher;
+    $("kick").disabled = !isTeacher;
+    $("lock").textContent = state.locked ? "Raum öffnen" : "Raum schließen";
+  }
+
+  function tickExpiry(){
+    if(!state.expiresAt) return;
+    const ms = state.expiresAt - Date.now();
+    if(ms <= 0){ setStatus("abgelaufen"); return; }
+    const min = Math.ceil(ms/60000);
+    setStatus(`verbunden · ${min} min`);
+    setTimeout(tickExpiry, 15000);
+  }
+
+  $("startRoom").onclick = async () => {
+    const r = normRoom($("roomInput").value);
+    if(!r) return alert("Bitte gültigen Raumnamen eingeben.");
+    state.roomId = r;
+    renderLinkQR();
+
+    try{
+      const j = await api("/api/create", { roomId: r });
+      if(j.roomPin) $("roomPin").textContent = j.roomPin;
+      if(j.teacherPin) $("teacherPin").textContent = j.teacherPin;
+      if(j.alreadyExists) alert("Raum existiert bereits (noch aktiv). Wenn du neue Pins willst: anderen Raumnamen wählen.");
+      setStatus("Raum bereit");
+    }catch(e){
+      alert("Create error: " + e.message);
+    }
+  };
+
+  $("join").onclick = async () => {
+    if(!state.roomId) state.roomId = normRoom(nowRoomFromURL());
+    if(!state.roomId) return alert("Kein Raum in URL. Lehrer muss Raum starten oder Link teilen.");
+    renderLinkQR();
+
+    const displayName = $("name").value.trim();
+    const roomPin = $("pin").value.trim().toUpperCase();
+    if(!displayName) return alert("Name fehlt.");
+    if(!roomPin) return alert("Raum-PIN fehlt.");
+
+    try{
+      const j = await api("/api/join", { roomId: state.roomId, displayName, roomPin });
+      state.token = j.token;
+      state.role = j.role;
+      state.locked = !!j.locked;
+      state.expiresAt = j.expiresAt || 0;
+      wsOpen();
+      applyControls();
+    }catch(e){
+      alert("Join error: " + e.message);
+    }
+  };
+
+  $("teacher").onclick = async () => {
+    if(!state.roomId) state.roomId = normRoom(nowRoomFromURL());
+    if(!state.roomId) return alert("Kein Raum in URL.");
+    renderLinkQR();
+
+    const teacherPin = $("tpin").value.trim().toUpperCase();
+    if(!teacherPin) return alert("Lehrer-PIN fehlt.");
+
+    try{
+      const j = await api("/api/teacher", { roomId: state.roomId, teacherPin });
+      state.token = j.token;
+      state.role = j.role;
+      state.locked = !!j.locked;
+      state.expiresAt = j.expiresAt || 0;
+      wsOpen();
+      applyControls();
+    }catch(e){
+      alert("Teacher error: " + e.message);
+    }
+  };
+
+  $("send").onclick = () => {
+    const text = $("text").value.trim();
+    if(!text || !state.ws || state.ws.readyState !== 1) return;
+    state.ws.send(JSON.stringify({ type:"send", text }));
+    $("text").value = "";
+  };
+  $("text").addEventListener("keydown", (e)=>{ if(e.key==="Enter") $("send").click(); });
+
+  $("lock").onclick = () => {
+    if(!state.ws || state.ws.readyState !== 1) return;
+    state.ws.send(JSON.stringify({ type:"lock", locked: !state.locked }));
+  };
+
+  $("kick").onclick = () => {
+    if(!confirm("Wirklich alle rauswerfen? Alle müssen mit PIN neu beitreten.")) return;
+    if(!state.ws || state.ws.readyState !== 1) return;
+    state.ws.send(JSON.stringify({ type:"kickAll" }));
+  };
+
+  $("msgs").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-del]");
+    if(!btn) return;
+    const id = btn.getAttribute("data-del");
+    if(!id) return;
+    if(!confirm("Nachricht soft löschen?")) return;
+    if(!state.ws || state.ws.readyState !== 1) return;
+    state.ws.send(JSON.stringify({ type:"softDelete", id }));
+  });
+
+  const fromUrl = normRoom(nowRoomFromURL());
+  if(fromUrl){ state.roomId = fromUrl; renderLinkQR(); setStatus("Raum via Link geladen"); }
+  else { renderLinkQR(); setStatus("bereit"); }
+</script>
+</body>
+</html>
